@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>3D ASCII Bouquet</title>
+<style>
+html,body{margin:0;height:100%;background:#050507;overflow:hidden;cursor:grab}
+canvas{display:block;width:100vw;height:100vh}
+#msg{position:fixed;bottom:18px;width:100%;text-align:center;color:#ff8fb3;font:15px monospace;letter-spacing:2px;opacity:.8;pointer-events:none}
+</style></head><body>
+<canvas id="c"></canvas><div id="msg">For my lovely wife, Zahra Tedjowongso ♥</div>
+<script>
+// ---------- tiny vector helpers ----------
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s], dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm=a=>{const l=Math.hypot(...a)||1;return[a[0]/l,a[1]/l,a[2]/l]};
+
+// ---------- point cloud: position, normal, material ----------
+const P=[],N=[],M=[],P0=[],N0=[],REV=[],BST=[];
+let curReveal=0,curBloom=-1,revealFn=null;
+const MAT=[ // r,g,b
+ [235,40,70],   //0 red rose
+ [255,120,170], //1 pink rose
+ [255,235,240], //2 white rose
+ [60,170,80],   //3 stem / leaf
+ [215,175,130], //4 kraft paper
+ [250,190,215], //5 pink tissue
+ [200,30,60],   //6 ribbon
+ [255,255,255], //7 baby's breath
+ [255,170,90],  //8 peach rose
+ [255,205,50],  //9 yellow tulip
+ [165,80,225],  //10 purple tulip
+ [255,150,200], //11 pink lily
+ [255,120,30],  //12 lily stamen
+ [255,250,245], //13 white lily
+ [250,250,250], //14 daisy white
+ [255,110,40],  //15 gerbera orange
+ [255,90,140],  //16 carnation
+ [150,110,235], //17 lavender
+ [120,165,255], //18 hydrangea blue
+ [120,70,30],   //19 dark centre
+ [40,130,60],   //20 fern
+ [130,175,150], //21 eucalyptus
+];
+// sample surface f(u,v) -> point, normals by finite differences
+function surface(f,nu,nv,mat,u0=0,u1=1,v0=0,v1=1){
+  const e=1e-3;
+  for(let i=0;i<=nu;i++)for(let j=0;j<=nv;j++){
+    const u=u0+(u1-u0)*i/nu, v=v0+(v1-v0)*j/nv;
+    for(const o of[1,0]){
+      const p=f(u,v,o), du=sub(f(u+e,v,o),p), dv=sub(f(u,v+e,o),p), n=norm(cross(du,dv));
+      if(o){P.push(p);N.push(n)}else{P0.push(p);N0.push(n)}
+    }
+    M.push(mat);REV.push(revealFn?revealFn(u,v):curReveal);BST.push(curBloom);
+  }
+}
+const mix=(a,b,o)=>a+(b-a)*o;
+function frameOf(d){d=norm(d);const a=Math.abs(d[1])<.9?[0,1,0]:[1,0,0];const e1=norm(cross(a,d));return[e1,cross(d,e1),d]}
+const toWorld=(c,F,x,y,z)=>add(c,add(mul(F[0],x),add(mul(F[1],y),mul(F[2],z))));
+
+// ---------- rose ----------
+function rose(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  // tight bud centre
+  surface((u,v,o)=>{const a=v*Math.PI*2,r=size*mix(.13,.18,o)*Math.sin(u*Math.PI*.9)*(1+.15*Math.sin(a*3+u*6));
+    return toWorld(c,F,r*Math.cos(a+u*4),r*Math.sin(a+u*4),size*mix(.6,1,o)*(.05+.32*u))},20,50,mat);
+  const layers=4;
+  for(let l=0;l<layers;l++){
+    const n=5+l, R=size*(.32+.2*l), tilt0=.25+.33*l, phi=Math.PI/n*1.35;
+    for(let k=0;k<n;k++){
+      const th=2*Math.PI*k/n+l*.7+seed;
+      surface((u,v,o)=>{
+        const ol=Math.min(1,Math.max(0,o*1.6-(layers-1-l)*.0-l*.15)); // outer petals open first-ish
+        const w=(v*2-1), tilt=mix(.04+.05*l,tilt0+.9*u*u*(l/layers+.3),ol);
+        const s=u*R*mix(.55,1,ol), a=th+(1-ol)*.9*(1-u)+w*phi*(.35+.65*Math.sin(Math.PI*(.15+.8*u)));
+        const rho=(s*Math.sin(tilt)+size*.12)*(1-.12*w*w), h=s*Math.cos(tilt)+size*.05*w*w;
+        return toWorld(c,F,rho*Math.cos(a),rho*Math.sin(a),h);
+      },22,16,mat);
+    }
+  }
+  // sepals
+  for(let k=0;k<5;k++){const th=k*1.257+seed;
+    surface((u,v,o)=>{const w=v*2-1,r=size*(.15+.45*u)*mix(.45,1,o),a=th+w*.25*(1-u);
+      return toWorld(c,F,r*Math.cos(a),r*Math.sin(a),-size*.05+size*mix(.35,-.25,o)*u*u)},6,4,3)}
+}
+// ---------- tulip: 6 cupped petals ----------
+function tulip(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  for(let k=0;k<6;k++){const th=k*Math.PI/3+seed+(k%2)*.2, inner=k%2?.88:1;
+    surface((u,v,o)=>{const w=v*2-1, phi=Math.PI/3*.75;
+      const bulge=Math.sin(Math.PI*Math.min(1,u*.95+.05));
+      const rho=size*inner*(.12+.38*bulge*mix(.75,1,o)+mix(0,.22,o)*u*u*u)*(1-.1*w*w);
+      const a=th+w*phi*(.3+.7*Math.sin(Math.PI*(.1+.85*u)));
+      return toWorld(c,F,rho*Math.cos(a),rho*Math.sin(a),size*1.15*u*mix(.8,1,o)+size*.12*w*w*u)},20,12,mat)}
+}
+// ---------- lily: 6 long recurved petals + stamens ----------
+function lily(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  for(let k=0;k<6;k++){const th=k*Math.PI/3+seed, Lp=size*(k%2?1.05:1.15);
+    surface((u,v,o)=>{const w=v*2-1;
+      const tilt=mix(.08,.35+1.9*u*u,o), s=u*Lp, half=.32*Math.pow(Math.sin(Math.PI*Math.min(1,u*1.05)),.8)*mix(.5,1,o);
+      const rho=s*Math.sin(tilt)+size*.05, h=s*Math.cos(tilt)*mix(1.1,1,o);
+      const a=th+w*half*(1-.25*u);
+      const keel=-size*.06*(1-w*w)*o;               // central groove
+      return toWorld(c,F,(rho+keel*Math.cos(tilt))*Math.cos(a),(rho+keel*Math.cos(tilt))*Math.sin(a),h-keel*Math.sin(tilt))},26,10,mat)}
+  for(let k=0;k<6;k++){const a=k*1.047+seed+.5;
+    surface((u,v,o)=>{const r=size*.28*u*mix(.2,1,o)+.012*Math.cos(v*6.28),h=size*.75*u*mix(.5,1,o);
+      return toWorld(c,F,r*Math.cos(a)+.012*Math.sin(v*6.28),r*Math.sin(a),h)},10,4,3);
+    surface((u,v,o)=>{const r0=size*.28*mix(.2,1,o),h0=size*.75*mix(.5,1,o),t=u*Math.PI,p=v*6.28,rr=size*.06;
+      return toWorld(c,F,r0*Math.cos(a)+rr*Math.sin(t)*Math.cos(p),r0*Math.sin(a)+rr*.5*Math.sin(t)*Math.sin(p),h0+rr*Math.cos(t))},5,8,12);}
+}
+// ---------- small sphere helper ----------
+function ball(cf,rf,mat,n=6){surface((u,v,o)=>{const c=cf(o),r=rf(o),t=u*Math.PI,p=v*6.283;
+  return add(c,[r*Math.sin(t)*Math.cos(p),r*Math.cos(t),r*Math.sin(t)*Math.sin(p)])},n,n+2,mat)}
+// ---------- daisy / gerbera: ring(s) of thin petals opening flat + domed centre ----------
+function daisyBase(c,dir,size,mat,seed,count,rows,disc){
+  const F=frameOf(dir);
+  for(let r=0;r<rows;r++)for(let k=0;k<count;k++){const th=k*6.283/count+seed+r*.12, Lp=size*(.9-r*.12);
+    surface((u,v,o)=>{const w=v*2-1,tilt=mix(.12,1.35+.15*r+.25*u,o),s=u*Lp,rho=s*Math.sin(tilt)+size*.16;
+      const a=th+w*.09*Math.sin(Math.PI*Math.min(1,u*1.1));return toWorld(c,F,rho*Math.cos(a),rho*Math.sin(a),s*Math.cos(tilt)+size*.02*w*w)},12,3,mat)}
+  surface((u,v,o)=>{const a=v*6.283,r=size*.2*u*mix(.6,1,o);return toWorld(c,F,r*Math.cos(a),r*Math.sin(a),size*.1*(1-u*u)+size*.03*Math.sin(a*13+u*20))},8,40,disc);
+}
+const daisy=(c,d,s,m,sd)=>daisyBase(c,d,s,14,sd,18,1,9);
+const gerbera=(c,d,s,m,sd)=>daisyBase(c,d,s,m,sd,24,2,19);
+// ---------- carnation: ruffled frilly cup ----------
+function carnation(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  for(let l=0;l<3;l++)surface((u,v,o)=>{const a=v*6.283,R=size*(.45-l*.1)*mix(.35,1,o),r=R*u;
+    const h=size*(.15+.35*u*mix(1.6,.8,o))+size*.07*u*Math.sin(a*17+l*2+u*8)+l*size*.05;
+    return toWorld(c,F,r*Math.cos(a)*(1+.08*Math.sin(a*7)),r*Math.sin(a),h)},10,70,mat);
+}
+// ---------- lavender: spiral spike of tiny buds ----------
+function lavender(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  for(let i=0;i<26;i++){const t=i/26,a=i*2.4+seed;
+    ball(o=>toWorld(c,F,size*.1*Math.cos(a),size*.1*Math.sin(a),size*1.3*t),o=>size*mix(.035,.08,o)*(1-.4*t),mat,4)}
+}
+// ---------- hydrangea: dome of many small florets ----------
+function hydrangea(c,dir,size,mat,seed){
+  const F=frameOf(dir);
+  for(let i=0;i<46;i++){const z=1-(i+.5)/46*1.1,rr=Math.sqrt(Math.max(0,1-z*z)),a=i*2.4+seed;
+    ball(o=>toWorld(c,F,size*.42*rr*Math.cos(a)*mix(.55,1,o),size*.42*rr*Math.sin(a)*mix(.55,1,o),size*(.3+.38*z)*mix(.55,1,o)),
+         o=>size*mix(.04,.1,o),i%5?mat:2,4)}
+}
+// ---------- stem (quadratic bezier tube) + leaf ----------
+function stem(a,ctrl,b){
+  const bz=t=>add(add(mul(a,(1-t)*(1-t)),mul(ctrl,2*t*(1-t))),mul(b,t*t));
+  revealFn=(t)=>curReveal+t*1.6;
+  surface((t,s)=>{const p=bz(t),d=sub(bz(Math.min(1,t+.01)),bz(Math.max(0,t-.01)));
+    const F=frameOf(d),ang=s*Math.PI*2;return toWorld(p,F,.025*Math.cos(ang),.025*Math.sin(ang),0)},40,6,3);
+  revealFn=null;
+  return bz;
+}
+function leaf(p,dir,len){
+  const F=frameOf(dir);
+  surface((u,v)=>{const w=(v*2-1)*len*.32*Math.sin(Math.PI*u);
+    return toWorld(p,F,w,len*.15*(v*2-1)**2+len*.25*u*u,len*u)},16,8,3);
+}
+// ---------- build bouquet ----------
+const base=[0,-2.5,0];
+const heads=[ // position, size, material
+ [[0,.95,0],.66,13,lily],[[-.75,.65,.35],.48,0,rose],[[.75,.75,-.3],.44,9,tulip],[[.3,.55,.85],.58,11,lily],
+ [[-.3,.75,-.8],.44,10,tulip],[[-1.15,.2,-.3],.5,0,gerbera],[[1.15,.2,.35],.46,0,daisy],[[.6,.3,-1.1],.4,9,tulip],
+ [[-.6,.25,1.1],.42,10,tulip],[[1.0,.45,-.85],.44,16,carnation],[[-1.05,.5,.85],.5,13,lily],[[0,.2,-1.25],.42,1,rose],
+ [[-.35,1.15,.35],.42,17,lavender],[[.45,1.05,.25],.4,17,lavender],[[1.25,-.05,-.25],.55,18,hydrangea],
+ [[-1.25,-.05,.15],.42,0,daisy],[[.05,.25,1.25],.44,16,carnation],[[-.6,.45,-.15],.4,8,rose]];
+let seed=0,hi=0;
+for(let [h,s,m,fn] of heads){h=[h[0]*1.25,h[1]*1.05-.1,h[2]*1.25];s*=1.3;
+  const st=.8+hi*.35; hi++;
+  curReveal=st;curBloom=-1;
+  const dir=norm(add(sub(h,base),[0,1.4,0]));
+  const bz=stem(base,[h[0]*.15,-1.0,h[2]*.15],sub(h,mul(dir,s*.1)));
+  curReveal=st+1.6;curBloom=st+2.2+Math.random()*1.5;
+  fn(h,dir,s,m,seed+=1.3);
+  curBloom=-1;curReveal=st+1.2;
+  if(seed%2<1.3) leaf(bz(.55),norm(add([h[0],0,h[2]],[0,.6,0])),.45);
+}
+// ---------- ferns: arching fronds with paired leaflets, unfurling ----------
+function fern(ang,L,up,st){
+  const out=[Math.cos(ang),0,Math.sin(ang)],side=norm(cross([0,1,0],out)),b=[out[0]*.15,-1.35,out[2]*.15];
+  const P=(t,o)=>{const tt=t*mix(.3,1,o);return add(b,add(mul(out,L*tt*mix(.4,1,o)),[0,L*(up*tt-(.55+.3*(1-o))*tt*tt),0]))};
+  curReveal=st;curBloom=st+.3;
+  surface((t,s,o)=>{const ang2=s*6.283;return add(P(t,o),[.012*Math.cos(ang2),.012*Math.sin(ang2),0])},30,4,20);
+  for(let i=1;i<26;i++){const t=i/26,len=L*.2*Math.sin(Math.PI*Math.min(1,t*1.2+.05));
+    for(const sg of[-1,1])surface((u,v,o)=>{const p=P(t,o),d=norm(sub(P(Math.min(1,t+.02),o),p));
+      const sd=mul(side,sg),w=(v*2-1)*len*.22*Math.sin(Math.PI*u),l=len*u*mix(.15,1,o);
+      return add(p,add(mul(sd,l),add(mul(d,l*.35+w),[0,-l*l*.6+w*.2,0])))},6,3,20)}
+}
+for(let i=0;i<11;i++)fern(i*.571+.2,1.5+.4*(i%3)/2,1.25+.25*(i%2),1.4+i*.2);
+// ---------- eucalyptus sprigs: round silver-green coin leaves ----------
+function eucalyptus(ang,st){
+  const out=[Math.cos(ang),0,Math.sin(ang)],b=[out[0]*.1,-1.4,out[2]*.1],L=1.9;
+  const P=t=>add(b,add(mul(out,L*.55*t),[0,L*(1.0*t-.25*t*t),0]));
+  curReveal=st;curBloom=-1;
+  surface((t,s)=>add(P(t),[.012*Math.cos(s*6.28),0,.012*Math.sin(s*6.28)]),24,3,3);
+  for(let i=1;i<14;i++){const t=i/14,p=P(t),r=.1*(1.1-t*.5),a=i*2.2;
+    const nrm=norm([Math.cos(a),.6,Math.sin(a)]),F=frameOf(nrm),c=add(p,mul([Math.cos(a),0,Math.sin(a)],r*1.1));
+    curReveal=st+t*1.5;curBloom=st+t*1.5;
+    surface((u,v,o)=>{const q=v*6.283,rr=r*u*mix(.2,1,o);return toWorld(c,F,rr*Math.cos(q),rr*Math.sin(q),-.03*u*u)},4,14,21)}
+}
+for(let i=0;i<7;i++)eucalyptus(i*.9+.5,2+i*.3);
+// green berry/bud clusters
+for(let i=0;i<14;i++){const a=i*.45+.3,r=1.3+Math.random()*.5,y=-.6+Math.random()*.6;curReveal=8+i*.3;curBloom=8+i*.3;
+  for(let j=0;j<6;j++){const c=[r*Math.cos(a)+(Math.random()-.5)*.15,y+(Math.random()-.5)*.15,r*Math.sin(a)+(Math.random()-.5)*.15];
+    ball(()=>c,o=>.045*mix(.3,1,o),3,4)}}
+// baby's breath clusters
+for(let i=0;i<70;i++){curReveal=12+Math.random()*5;const a=Math.random()*6.28,r=1.1+Math.random()*.8,y=-.4+Math.random()*1.1;
+  const c=[r*Math.cos(a),y,r*Math.sin(a)];
+  surface((u,v)=>{const t=u*Math.PI,p=v*Math.PI*2;return add(c,[.045*Math.sin(t)*Math.cos(p),.045*Math.cos(t),.045*Math.sin(t)*Math.sin(p)])},5,7,7)}
+curReveal=0;curBloom=-1;
+// wrapping paper: outer kraft cone + inner pink tissue, ruffled rim
+function cone(r0,r1,y0,y1,mat,ph,gap){
+  surface((u,v)=>{const a=gap+v*(Math.PI*2-2*gap)+ph;
+    const r=(r0+(r1-r0)*u)*(1+.07*u*u*Math.sin(a*9)), y=y0+(y1-y0)*u+ .08*u*u*Math.sin(a*5+1);
+    return[r*Math.cos(a),y,r*Math.sin(a)]},40,160,mat)}
+const CONES=[[.05,.62,-2.75,-1.25],[.05,.7,-2.6,-1.1]];
+cone(...CONES[0],4,1.2,.55);
+cone(...CONES[1],5,4.2,.9);
+const coneR=y=>Math.max(...CONES.map(([r0,r1,y0,y1])=>{const u=(y-y0)/(y1-y0);return u<0||u>1?0:(r0+(r1-r0)*u)*(1+.07*u*u)}))+.035;
+const RY=-2.2;
+// ribbon band + bow loops
+surface((u,v)=>{const a=v*Math.PI*2,y=RY+u*.12,r=coneR(y)+.01;return[r*Math.cos(a),y,r*Math.sin(a)]},6,120,6);
+{const zf=-coneR(RY+.06)-.06;
+ for(const sgn of[-1,1]){
+  surface((u,v)=>{const a=u*Math.PI*2;return[sgn*(.03+.13*(1-Math.cos(a))),RY+.06+.09*Math.sin(a),zf-.05*(1-Math.cos(a))*.5+(v-.5)*.02]},40,4,6);
+  surface((u,v)=>{const w=(v-.5)*.07;return[sgn*(.02+.08*u)+w*.3,RY+.04-.32*u,zf-.02+w]},14,4,6);} // tails
+ ball(()=>[0,RY+.06,zf],()=>.035,6,5);}
+
+const COUNT=P.length;
+const PX=new Float32Array(COUNT*3),NX=new Float32Array(COUNT*3),PC=new Float32Array(COUNT*3),NC=new Float32Array(COUNT*3);
+const RV=Float32Array.from(REV),BS=Float32Array.from(BST);
+for(let i=0;i<COUNT;i++){PX.set(P[i],i*3);NX.set(N[i],i*3);PC.set(P0[i],i*3);NC.set(N0[i],i*3)}
+const ease=x=>x<0?0:x>1?1:1-Math.pow(1-x,3);
+
+// ---------- renderer ----------
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const RAMP=" .,-~:;=!*#$@";
+let cols,rows,cw,ch,zbuf,lum,mat,fs;
+function resize(){
+  const dpr=devicePixelRatio||1;cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;
+  fs=Math.max(7,Math.round(Math.min(innerWidth,innerHeight)/80))*dpr;
+  ctx.font=`bold ${fs}px monospace`;cw=ctx.measureText('@').width;ch=fs*1.05;
+  cols=Math.floor(cv.width/cw);rows=Math.floor(cv.height/ch);
+  zbuf=new Float32Array(cols*rows);lum=new Float32Array(cols*rows);mat=new Int8Array(cols*rows);
+}
+addEventListener('resize',resize);resize();
+
+let yaw=0,pitch=.45,drag=null,auto=true;
+cv.onpointerdown=e=>{drag=[e.clientX,e.clientY,yaw,pitch];auto=false;cv.style.cursor='grabbing'};
+onpointerup=()=>{drag=null;cv.style.cursor='grab';setTimeout(()=>auto=true,1500)};
+onpointermove=e=>{if(drag){yaw=drag[2]+(e.clientX-drag[0])*.008;pitch=Math.max(-.6,Math.min(1,drag[3]+(e.clientY-drag[1])*.006))}};
+
+var t0=performance.now();var replay=()=>{t0=performance.now();yaw=0};
+cv.ondblclick=replay;onkeydown=e=>{if(e.key=='r'||e.key=='R')replay()};
+const L=norm([-.6,.7,-.8]), H=norm(add(L,[0,0,-1]));
+const sparks=[...Array(60)].map(()=>[Math.random(),Math.random(),Math.random()]);
+function draw(now){
+  const t=(now-t0)/1000;
+  if(auto)yaw+=.0045;
+  zbuf.fill(0);mat.fill(-1);
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const D=8.2, K=Math.min(cols*cw,rows*ch)*1.45, ox=cols/2, oy=rows*.5;
+  const sway=Math.sin(t*1.3)*.04;
+  for(let i=0;i<COUNT;i++){
+    if(t<RV[i])continue;
+    let x=PX[i*3],y=PX[i*3+1],z=PX[i*3+2],nx=NX[i*3],ny=NX[i*3+1],nz=NX[i*3+2];
+    if(BS[i]>=0){const o=ease((t-BS[i])/10);if(o<1){const q=1-o;
+      x=x*o+PC[i*3]*q;y=y*o+PC[i*3+1]*q;z=z*o+PC[i*3+2]*q;
+      nx=nx*o+NC[i*3]*q;ny=ny*o+NC[i*3+1]*q;nz=nz*o+NC[i*3+2]*q;}}
+    y+=.8;
+    const s=sway*(y+1); x+=s*y*.5;           // gentle sway, stronger near the top
+    // yaw
+    let x1=x*cy+z*sy, z1=-x*sy+z*cy, nx1=nx*cy+nz*sy, nz1=-nx*sy+nz*cy;
+    // pitch
+    let y2=y*cp-z1*sp, z2=y*sp+z1*cp, ny2=ny*cp-nz1*sp, nz2=ny*sp+nz1*cp;
+    const zz=z2+D, iz=1/zz;
+    const sx=Math.round(ox+K*x1*iz/cw), syy=Math.round(oy-K*y2*iz/ch);
+    if(sx<0||sx>=cols||syy<0||syy>=rows)continue;
+    const idx=syy*cols+sx;
+    if(iz<=zbuf[idx])continue;
+    if(nz2>0){nx1=-nx1;ny2=-ny2;nz2=-nz2}     // two-sided surfaces
+    const diff=Math.max(0,nx1*L[0]+ny2*L[1]+nz2*L[2]);
+    const spec=Math.pow(Math.max(0,nx1*H[0]+ny2*H[1]+nz2*H[2]),24);
+    const ao=Math.min(1,Math.max(.35,1-(.9-Math.hypot(x,z))*.2));
+    zbuf[idx]=iz;lum[idx]=Math.min(1,(.22+.78*diff)*ao+.5*spec);mat[idx]=M[i];
+  }
+  ctx.fillStyle='#050507';ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.textBaseline='top';
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const idx=r*cols+c,m=mat[idx];if(m<0)continue;
+    const l=lum[idx],col=MAT[m],k=.25+.95*l;
+    ctx.fillStyle=`rgb(${Math.min(255,col[0]*k)|0},${Math.min(255,col[1]*k)|0},${Math.min(255,col[2]*k)|0})`;
+    ctx.fillText(RAMP[Math.max(1,Math.round(l*(RAMP.length-1)))],c*cw,r*ch);
+  }
+  // drifting sparkles
+  for(const s of sparks){
+    const px=(s[0]*cols+Math.sin(t*.5+s[2]*9)*3)|0, py=((s[1]+t*.02*(.5+s[2]))%1)*rows|0;
+    const tw=.5+.5*Math.sin(t*3+s[2]*20);
+    ctx.fillStyle=`rgba(255,${180+60*s[2]|0},210,${.2+.6*tw})`;ctx.fillText(tw>.7?'*':'.',px*cw,py*ch);
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script></body></html>
